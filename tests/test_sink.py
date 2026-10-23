@@ -67,3 +67,15 @@ def test_status_history_has_one_row_per_change(sink):
         sink.apply(event("u", lsn, order(status=s)))
     rows = sink.con.execute("SELECT status FROM order_status_history ORDER BY lsn").fetchall()
     assert [r[0] for r in rows] == ["created", "paid", "shipped"]
+
+
+def test_batch_keeps_newest_version_per_key(sink):
+    r = sink.apply_batch([event("c", 10, order()), event("u", 30, order(status="shipped")),
+                          event("u", 20, order(status="paid"))])
+    assert r == {"applied": 1, "skipped": 2, "dlq": 0}
+    assert state(sink) == [(1, "shipped", 100, False)]
+
+
+def test_batch_mixing_old_and_new_schema(sink):
+    sink.apply_batch([event("c", 10, order(id=1)), event("c", 20, order(id=2, coupon="X"))])
+    assert sink.con.execute("SELECT id, coupon FROM orders ORDER BY id").fetchall() == [(1, None), (2, "X")]

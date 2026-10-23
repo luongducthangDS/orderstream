@@ -109,7 +109,7 @@ def main():
         t = time.time()
         s = consume(sink, "sink-main")
         dt = time.time() - t - 8.0                       # minus the idle wait at the end
-        events = s["applied"] + s["skipped"] + s["dlq"]
+        events = s["events"]
         out["catch_up"] = {"events": events, "applied": s["applied"], "skipped": s["skipped"], "dlq": s["dlq"],
                            "seconds": round(dt, 1), "events_per_s": round(events / dt)}
         out["reconcile_after_catch_up"] = reconcile(con, sink)
@@ -117,7 +117,7 @@ def main():
         # 2) replay everything from offset 0 with a new consumer group: nothing may change
         before = snapshot(sink)
         s = consume(sink, "sink-replay")
-        out["replay"] = {"events": s["applied"] + s["skipped"], "applied": s["applied"],
+        out["replay"] = {"events": s["events"], "applied": s["applied"],
                          "state_identical": snapshot(sink) == before}
 
         # 3) crash: new writes, consumer dies mid-batch without committing, then restarts
@@ -129,7 +129,7 @@ def main():
         time.sleep(5)
         first = consume(sink, "sink-main", max_msgs=n_crash // 2 + 123)   # dies mid-batch
         second = consume(sink, "sink-main")
-        out["crash_resume"] = {"source_changes": n_crash, "processed_before_crash": first["applied"] + first["skipped"],
+        out["crash_resume"] = {"source_changes": n_crash, "processed_before_crash": first["events"],
                                "redelivered_and_skipped": second["skipped"], "applied_after_restart": second["applied"],
                                "reconcile": reconcile(con, sink)}
 
@@ -156,9 +156,10 @@ def main():
                     time.sleep(0.02)
         th = threading.Thread(target=writer); th.start()
         timer = threading.Timer(60, stop.set); timer.start()
-        s = consume(sink, "sink-main", idle_s=10, commit_every=50)
+        s = consume(sink, "sink-main", idle_s=10)
         th.join()
         lat = s["lat_ms"]
+        out["live_batching"] = "flush at 2,000 events or 0.5 s, whichever first"
         out["live"] = {"events": len(lat), "latency_ms_p50": pct(lat, .5), "latency_ms_p95": pct(lat, .95),
                        "latency_ms_p99": pct(lat, .99), "latency_ms_max": round(max(lat), 1)}
         out["final_reconcile"] = reconcile(con, sink)

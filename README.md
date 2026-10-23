@@ -1,77 +1,77 @@
-# OrderStream: real-time CDC pipeline (Postgres → Debezium → Redpanda → DuckDB)
+# OrderStream: change data capture from Postgres to DuckDB
 
-A production-style Change Data Capture (CDC) streaming pipeline that mirrors an OLTP PostgreSQL database into a DuckDB analytical sink in near real-time, with strict ordering, idempotency, and automated schema evolution.
-
-## Architecture
+Every insert, update and delete in a shop's Postgres database is streamed into an analytics copy in DuckDB, and the
+copy is **provably identical** to the source after normal runs, replays, a crash at the worst moment, and a schema
+change.
 
 ```
-PostgreSQL 16 (logical replication)
-       │ (WAL events via wal2json / pgoutput)
-       ▼
-Debezium 2.7 (Kafka Connect)
-       │ (JSON change events: c, u, d)
-       ▼
-Redpanda 24.2 (Kafka-compatible event broker)
-       │ (topic: shop.public.orders, shop.public.customers)
-       ▼
-OrderStream Consumer (Python)
-       │ (LSN deduplication, schema evolution, SCD2 status history, DLQ)
-       ▼
-DuckDB Analytical Sink (read-optimized analytical storage)
+Postgres 16 (wal_level=logical, pgoutput)
+   │  every committed change, incl. deletes and intermediate updates
+   ▼
+Debezium 2.7 (Kafka Connect) ──► Redpanda 24.2 (Kafka API)   topics: shop.public.orders, shop.public.customers
+                                      │
+                                      ▼
+                         Python consumer (micro-batches) ──► DuckDB: orders, customers,
+                                                             order_status_history, dlq
 ```
 
-## Core Engineering Features
+## Results (`reports/results.json`, one run on a laptop, Docker Desktop)
 
-1. **Log Sequence Number (LSN) Deduplication**:
-   - Every event carries the Postgres WAL `lsn`.
-   - The sink compares `_lsn`: if an event has `lsn <= current_lsn`, it is safely skipped.
-   - Replaying a topic from offset 0 produces **0 state drift** (strictly idempotent).
+| Check | Result |
+|---|---|
+| Workload | 2,000 customers, 30,000 orders, ~40,000 status changes, 200 customer updates, 500 deletes → **72,699 change events** |
+| Catch-up throughput | **12,322 events/s** (72,699 events in 5.9 s) |
+| Reconciliation | source vs sink: 29,500 = 29,500 orders, 74,195,669,000 = 74,195,669,000 VND, **0 mismatched rows** (row-by-row) |
+| Replay from offset 0 | 72,699 events re-read, **0 applied, state identical** |
+| Crash between sink commit and offset commit | 1,126 events redelivered, **1,126 skipped**, 880 new applied, still 0 mismatched rows |
+| Schema change at source (`ALTER TABLE orders ADD COLUMN coupon`) | column added in the sink automatically; 294 / 294 rows carry the value |
+| Live traffic (~40 inserts/s for 60 s) | source commit → row visible in DuckDB: **p50 0.98 s, p95 1.42 s, p99 1.53 s** |
+| Final reconciliation (after live traffic) | 31,885 = 31,885 orders, 0 mismatched rows |
 
-2. **Out-of-Order & Late Event Protection**:
-   - Network delays or consumer restarts cannot cause older updates to overwrite newer state.
+## How correctness is guaranteed
 
-3. **Automated Schema Evolution**:
-   - When a new column (e.g., `coupon TEXT`) is added to Postgres, the sink detects missing columns and issues `ALTER TABLE ... ADD COLUMN` on DuckDB dynamically without crashing or dropping messages.
+- **At-least-once delivery + idempotent sink.** Offsets are committed only after the DuckDB transaction commits.
+  A crash in between means redelivery, never loss. The demo deliberately crashes at exactly that point.
+- **LSN guard.** Each row stores the Postgres LSN of the change that produced it. A change is written only if its
+  LSN is newer, so duplicates, replays and late older events cannot overwrite newer state.
+- **Newest version per key per batch.** A batch keeps only the latest change per id (the 942 "skipped" events in
+  catch-up are orders that changed several times inside one batch); the status history keeps all of them.
+- **Full row images** (`REPLICA IDENTITY FULL`), so updates and deletes never need a lookup at the source.
+- **Soft deletes** (`_deleted = true`) keep deleted orders available for audit.
+- **Bad events go to a `dlq` table** instead of stopping the stream.
 
-4. **Soft Deletes**:
-   - Deletes (`op: "d"`) set `_deleted = true`, preserving historical records for downstream analytics and audit trails.
+## Decisions and what I measured before making them
 
-5. **State Change History (SCD Type 2)**:
-   - Tracks every lifecycle transition (`created → paid → shipped → delivered`) into `order_status_history` with timestamps and LSN.
+- **Micro-batches instead of row-by-row.** The first version applied one event per DuckDB statement and kept up
+  with only ~70 events/s (observed consumer lag while another CPU-heavy job was running on the same laptop).
+  Batching 2,000 events per transaction with one set-based `INSERT OR REPLACE ... BY NAME` gave 12,322 events/s.
+  The cost is latency: a batch is flushed at 2,000 events or 0.5 s.
+- **Where the 1 s latency comes from:** Debezium's default 0.5 s poll interval plus the 0.5 s flush window. Lower
+  both if fresher data is worth more CPU. Latency is measured as Postgres commit time (from the event) to DuckDB
+  commit on the host, so it also includes any clock difference between the Docker VM and the host.
+- **Redpanda instead of Apache Kafka** for a single-node local stack: same Kafka API, one container, no ZooKeeper
+  or KRaft tuning.
+- **CDC instead of polling `updated_at`:** polling misses deletes and changes that happen between two polls.
 
-6. **Dead Letter Queue (DLQ)**:
-   - Malformed JSON or unexpected payloads are isolated into a `dlq` table for inspection rather than blocking the stream.
+## Limits (honest list)
 
-## Run It
+- One partition per topic, so no parallel consumers; ordering per key would need `id` as the partition key.
+- DuckDB allows one writer process. For several writers the sink would move to Postgres or a lakehouse format.
+- New columns are added; renamed or retyped columns are not handled.
 
-### 1. Run unit tests (correctness, replay, schema evolution, DLQ)
+## Run it
+
 ```bash
-pytest -q
+pip install -r requirements.txt
+pytest -q                         # 9 sink tests: idempotency, ordering, deletes, schema change, DLQ, batching
+docker compose up -d --wait       # Postgres :55432, Redpanda :19092, Kafka Connect :8083
+python scripts/run_demo.py        # ~5 min -> reports/results.json
+docker compose down -v
 ```
 
-### 2. Start the local streaming stack
-```bash
-docker compose up -d
-```
-Services started:
-- PostgreSQL on port `55432` (`wal_level=logical`)
-- Redpanda on port `19092`
-- Debezium Connect on port `8083`
+## Interview questions this project prepares for
 
-### 3. Run end-to-end demo and latency benchmark
-```bash
-python scripts/run_demo.py
-```
-This script:
-1. Registers the Debezium Postgres CDC connector.
-2. Generates 2,000 customers, 30,000 orders, 40,000 updates, and 500 deletes.
-3. Consumes events and reconciles OLTP vs OLAP state.
-4. Replays from offset 0 to prove 100% idempotency.
-5. Performs a schema migration on PostgreSQL and verifies dynamic schema evolution.
-6. Streams live traffic at 50 msg/s to measure commit-to-sink latency (p50, p95, p99).
-
-## Design Decisions
-
-- **Why Redpanda over JVM Kafka?** Zero JVM tuning, starts in seconds with single-binary simplicity, 100% Kafka API compatible, and extremely light on resources for local/edge deployments.
-- **Why Debezium logical decoding?** Captures deletes and intermediate updates that query polling would completely miss, with zero polling load on the database.
-- **Why DuckDB as analytical sink?** Fast columnar vectorized queries, zero client/server overhead, and seamless SQL integration with Python/dbt.
+1. Why is "exactly-once" here an effect and not a delivery guarantee?
+2. What breaks if two partitions carry changes for the same order?
+3. How would you backfill a new table without stopping the stream?
+4. Why can the LSN be trusted as an order, but `updated_at` cannot?

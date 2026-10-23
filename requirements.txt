@@ -1,0 +1,6 @@
+confluent-kafka
+psycopg[binary]
+duckdb
+pandas
+requests
+pytest

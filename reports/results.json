@@ -1,0 +1,66 @@
+{
+  "generate_s": 82.2,
+  "orders_after_generate": 29500,
+  "catch_up": {
+    "events": 72699,
+    "applied": 71757,
+    "skipped": 942,
+    "dlq": 0,
+    "seconds": 5.9,
+    "events_per_s": 12322
+  },
+  "reconcile_after_catch_up": {
+    "orders_source": 29500,
+    "orders_sink": 29500,
+    "amount_source": 74195669000,
+    "amount_sink": 74195669000,
+    "customers_source": 2000,
+    "customers_sink": 2000,
+    "mismatched_rows": 0,
+    "deleted_in_sink": 500
+  },
+  "replay": {
+    "events": 72699,
+    "applied": 0,
+    "state_identical": true
+  },
+  "crash_resume": {
+    "source_changes": 2006,
+    "processed_before_crash": 1126,
+    "redelivered_and_skipped": 1126,
+    "applied_after_restart": 880,
+    "reconcile": {
+      "orders_source": 29500,
+      "orders_sink": 29500,
+      "amount_source": 74195669000,
+      "amount_sink": 74195669000,
+      "customers_source": 2000,
+      "customers_sink": 2000,
+      "mismatched_rows": 0,
+      "deleted_in_sink": 500
+    }
+  },
+  "schema_change": {
+    "rows_updated_with_coupon": 294,
+    "sink_rows_with_coupon": 294
+  },
+  "live_batching": "flush at 2,000 events or 0.5 s, whichever first",
+  "live": {
+    "events": 2385,
+    "latency_ms_p50": 981.1,
+    "latency_ms_p95": 1418.8,
+    "latency_ms_p99": 1527.1,
+    "latency_ms_max": 1619.1
+  },
+  "final_reconcile": {
+    "orders_source": 31885,
+    "orders_sink": 31885,
+    "amount_source": 74434169000,
+    "amount_sink": 74434169000,
+    "customers_source": 2000,
+    "customers_sink": 2000,
+    "mismatched_rows": 0,
+    "deleted_in_sink": 500
+  },
+  "status_history_rows": 74684
+}

@@ -18,7 +18,7 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install duckdb pytest
+        run: pip install duckdb pandas pytest
 
       - name: Run Sink Correctness Tests (Idempotency, Ordering, DLQ, Schema Evolution)
         run: pytest -q --junitxml=reports/junit.xml
