@@ -50,18 +50,16 @@ def bulk(con, n_customers=2_000, n_orders=30_000, n_updates=40_000, n_deletes=50
         cur.executemany("INSERT INTO orders (customer_id, status, amount_vnd) VALUES (%s, 'created', %s)",
                         [(rng.randint(1, n_customers), rng.randint(20, 5_000) * 1_000) for _ in range(n_orders)])
         con.commit()
-        done = 0
-        while done < n_updates:              # random order lifecycle moves, many orders change several times
-            oid = rng.randint(1, n_orders)
-            cur.execute("SELECT status FROM orders WHERE id = %s", [oid])
-            r = cur.fetchone()
-            if r and r[0] in NEXT:
-                cur.execute("UPDATE orders SET status = %s, updated_at = now() WHERE id = %s",
-                            [rng.choice(NEXT[r[0]]), oid])
-                done += 1
-                if done % 1000 == 0:
-                    con.commit()
-        cur.execute("UPDATE customers SET city = 'HCMC', updated_at = now() WHERE id %% 10 = 0")
+        status = {i: "created" for i in range(1, n_orders + 1)}   # ids are 1..n on a fresh database
+        for done in range(1, n_updates + 1):  # random lifecycle moves; many orders change several times
+            oid = rng.choice([i for i in rng.sample(range(1, n_orders + 1), 20) if status[i] in NEXT] or [None])
+            if oid is None:
+                continue
+            status[oid] = rng.choice(NEXT[status[oid]])
+            cur.execute("UPDATE orders SET status = %s, updated_at = now() WHERE id = %s", [status[oid], oid])
+            if done % 1000 == 0:
+                con.commit()
+        cur.execute("UPDATE customers SET city = 'HCMC', updated_at = now() WHERE id % 10 = 0")
         cur.execute("DELETE FROM orders WHERE id IN (SELECT id FROM orders WHERE status = 'cancelled' "
                     "ORDER BY id LIMIT %s)", [n_deletes])
         con.commit()
@@ -138,7 +136,7 @@ def main():
         # 4) schema change at the source while the pipeline runs
         with con.cursor() as cur:
             cur.execute("ALTER TABLE orders ADD COLUMN coupon TEXT")
-            cur.execute("UPDATE orders SET coupon = 'SALE10', updated_at = now() WHERE id %% 100 = 1")
+            cur.execute("UPDATE orders SET coupon = 'SALE10', updated_at = now() WHERE id % 100 = 1")
             n_coupon = cur.rowcount
             con.commit()
         time.sleep(5)
