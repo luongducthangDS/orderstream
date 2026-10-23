@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: OrderStream Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install duckdb pytest
+
+      - name: Run Sink Correctness Tests (Idempotency, Ordering, DLQ, Schema Evolution)
+        run: pytest -q --junitxml=reports/junit.xml
