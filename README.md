@@ -42,10 +42,11 @@ Debezium 2.7 (Kafka Connect) ──► Redpanda 24.2 (Kafka API)   topics: shop.
 
 ## Decisions and what I measured before making them
 
-- **Micro-batches instead of row-by-row.** The first version applied one event per DuckDB statement and kept up
-  with only ~70 events/s (observed consumer lag while another CPU-heavy job was running on the same laptop).
-  Batching 2,000 events per transaction with one set-based `INSERT OR REPLACE ... BY NAME` gave 12,322 events/s.
-  The cost is latency: a batch is flushed at 2,000 events or 0.5 s.
+- **Micro-batches instead of row-by-row.** The first version wrote one event per DuckDB transaction. A
+  sink-only benchmark on the same events (`scripts/bench_sink.py` → `reports/bench_sink.json`) measures
+  **55 events/s** that way vs **35,731 events/s** with 2,000 events per transaction and one set-based
+  `INSERT OR REPLACE ... BY NAME`. End to end through Kafka the pipeline reaches 12,322 events/s. The cost is
+  latency: a batch is flushed at 2,000 events or 0.5 s.
 - **Where the 1 s latency comes from:** Debezium's default 0.5 s poll interval plus the 0.5 s flush window. Lower
   both if fresher data is worth more CPU. Latency is measured as Postgres commit time (from the event) to DuckDB
   commit on the host, so it also includes any clock difference between the Docker VM and the host.
@@ -66,6 +67,7 @@ pip install -r requirements.txt
 pytest -q                         # 9 sink tests: idempotency, ordering, deletes, schema change, DLQ, batching
 docker compose up -d --wait       # Postgres :55432, Redpanda :19092, Kafka Connect :8083
 python scripts/run_demo.py        # ~5 min -> reports/results.json
+python scripts/bench_sink.py      # ~1 min, no Docker -> reports/bench_sink.json
 docker compose down -v
 ```
 

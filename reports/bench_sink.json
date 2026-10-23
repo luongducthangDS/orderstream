@@ -1,0 +1,14 @@
+{
+  "row_by_row": {
+    "events": 3000,
+    "batch_size": 1,
+    "seconds": 54.45,
+    "events_per_s": 55
+  },
+  "micro_batch": {
+    "events": 60000,
+    "batch_size": 2000,
+    "seconds": 1.68,
+    "events_per_s": 35731
+  }
+}
