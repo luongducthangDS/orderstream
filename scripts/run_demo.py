@@ -6,7 +6,6 @@ Phases: register connector -> bulk load + lifecycle updates + deletes -> consume
 """
 import json
 import random
-import statistics
 import threading
 import time
 from pathlib import Path

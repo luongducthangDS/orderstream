@@ -1,0 +1,4 @@
+line-length = 120
+
+[lint]
+extend-select = ["I"]  # import order; defaults cover pyflakes + syntax errors

@@ -69,7 +69,7 @@ class Sink:
                 continue
             rows = list(by_id.values())
             self._ensure_columns(table, rows)
-            batch = pd.DataFrame(rows).astype(object)  # noqa: F841  (read by DuckDB below)
+            batch = pd.DataFrame(rows).astype(object)
             batch = batch.where(batch.notna(), None)   # a key missing in older events = NULL, not NaN
             n = self.con.execute(f"""INSERT OR REPLACE INTO {table} BY NAME
                 SELECT b.* FROM batch b LEFT JOIN {table} t ON t.id = b.id
